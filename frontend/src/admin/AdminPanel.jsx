@@ -1,5 +1,5 @@
 ﻿import { useEffect, useState } from 'react'
-import { Boxes, ChevronRight, ClipboardList, LayoutDashboard, LogOut, Menu, PackagePlus, Pencil, Plus, Search, ShieldCheck, Sparkles, Tag, Trash2, Users, X } from 'lucide-react'
+import { Boxes, BrainCircuit, ChevronRight, ClipboardList, LayoutDashboard, LogOut, Menu, PackagePlus, Pencil, Plus, Search, ShieldCheck, Sparkles, Tag, Trash2, Users, X } from 'lucide-react'
 import { api, unwrap } from '../services/api'
 
 const money = (value) => `Rs. ${Number(value || 0).toLocaleString('en-LK')}`
@@ -10,6 +10,7 @@ const tabs = [
   ['customers', 'Customers', Users],
   ['coupons', 'Coupons', Tag],
   ['events', 'Events', ShieldCheck],
+  ['rulelock', 'RuleLock AI', BrainCircuit],
 ]
 
 function Stat({ label, value, tone = '' }) {
@@ -255,6 +256,16 @@ function Events({ events }) {
   )
 }
 
+function RuleLock({ enabled, reload }) {
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const toggle = async () => {
+    setSaving(true); setError('')
+    try { await unwrap(api.patch('/admin/rulelock', { enabled: !enabled })); await reload() } catch (err) { setError(err.response?.data?.error?.message || 'Unable to update RuleLock AI.') } finally { setSaving(false) }
+  }
+  return <><Header title="RuleLock AI" /><section className="admin-card rulelock-card"><div className="rulelock-heading"><div className="rulelock-icon"><BrainCircuit size={24} /></div><div><p className="admin-kicker">Integration control</p><h2>RuleLock AI</h2></div></div><p className="rulelock-copy">Use this switch to control whether the future RuleLock AI service is connected to Cakely. This setting does not run RuleLock AI by itself.</p><div className="rulelock-control"><div><strong>{enabled ? 'RuleLock AI is on' : 'RuleLock AI is off'}</strong><small>{enabled ? 'The integration is marked as connected.' : 'The integration is disconnected from this site.'}</small></div><button type="button" className={enabled ? 'rulelock-switch enabled' : 'rulelock-switch'} onClick={toggle} disabled={saving} aria-pressed={enabled} aria-label={enabled ? 'Turn RuleLock AI off' : 'Turn RuleLock AI on'}><span /></button></div>{error && <p className="error">{error}</p>}</section></>
+}
+
 export default function AdminPanel() {
   const [tab, setTab] = useState('dashboard')
   const [open, setOpen] = useState(false)
@@ -277,7 +288,8 @@ export default function AdminPanel() {
     : tab === 'orders' ? <Orders orders={data.allOrders || []} reload={load} />
     : tab === 'customers' ? <Customers customers={data.customers || []} />
     : tab === 'coupons' ? <Coupons coupons={data.coupons || []} reload={load} />
-    : <Events events={data.events || []} />
+    : tab === 'events' ? <Events events={data.events || []} />
+    : <RuleLock enabled={data.rulelockEnabled === true} reload={load} />
 
   return (
     <div className="admin-shell">

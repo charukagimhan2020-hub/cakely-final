@@ -375,6 +375,7 @@ app.get("/admin/dashboard", async (req, res) => {
   const { data: coupons } = await supabase.from("coupons").select("*").order("created_at", { ascending: false });
   const { data: events } = await supabase.from("transaction_events").select("*").order("created_at", { ascending: false }).limit(20);
   const { data: products } = await supabase.from("products").select("*").order("id");
+  const { data: rulelockEvent } = await supabase.from("transaction_events").select("metadata").eq("event_type", "RULELOCK_SETTING_CHANGED").order("created_at", { ascending: false }).limit(1).maybeSingle();
 
   const usernameById = new Map((customers || []).map((c) => [c.id, c.username]));
   const orderDicts = (allOrders || []).map((row) => ({
@@ -420,8 +421,17 @@ app.get("/admin/dashboard", async (req, res) => {
       products: (products || []).map(productAsDict),
       coupons: couponDicts,
       events: eventDicts,
+      rulelockEnabled: rulelockEvent?.metadata?.enabled === true,
     },
   });
+});
+
+app.patch("/admin/rulelock", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const enabled = req.body?.enabled === true;
+  await record("RULELOCK_SETTING_CHANGED", { enabled }, admin.id);
+  res.json({ success: true, data: { enabled } });
 });
 
 app.post("/admin/products", async (req, res) => {
