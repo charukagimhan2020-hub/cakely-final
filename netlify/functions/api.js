@@ -7,7 +7,6 @@ const bcrypt = require("bcryptjs");
 const { createClient } = require("@supabase/supabase-js");
 
 const { validateCoupons, recordUsage } = require("./lib/couponService");
-const { sendTransactionEvent } = require("./lib/rulelockService"); // available, disabled by default
 const { storeImage, removeImage, removeImagesByPrefix } = require("./lib/storageService");
 
 const SECRET_KEY = process.env.JWT_SECRET_KEY || process.env.SECRET_KEY || "dev-only-change-me";
@@ -139,7 +138,18 @@ app.use(async (req, _res, next) => {
 });
 
 // ---------- routes ----------
-app.get("/health", (_req, res) => res.json({ success: true, service: "cakely-api" }));
+app.get("/health", async (_req, res) => {
+  const { error } = await supabase.from("products").select("id", { count: "exact", head: true });
+  if (error) {
+    return res.status(503).json({
+      success: false,
+      service: "cakely-api",
+      database: "unavailable",
+      error: { code: "DATABASE_UNAVAILABLE", message: "Database connection is not ready." },
+    });
+  }
+  res.json({ success: true, service: "cakely-api", database: "connected" });
+});
 
 app.get("/products", async (req, res) => {
   let query = supabase.from("products").select("*").eq("active", true).order("id");
@@ -583,4 +593,5 @@ app.delete("/admin/coupons/:id", async (req, res) => {
 
 app.use((_req, res) => res.status(404).json({ success: false, error: { code: "NOT_FOUND", message: "Route not found." } }));
 
+module.exports.app = app;
 module.exports.handler = serverless(app, { binary: ["multipart/form-data"] });

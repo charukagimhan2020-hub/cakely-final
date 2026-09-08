@@ -1,6 +1,9 @@
 [build]
-  command = "npm --prefix frontend install && npm --prefix frontend run build && npm --prefix netlify/functions install"
+  command = "npm ci --prefix frontend && npm run build --prefix frontend && npm ci --prefix netlify/functions"
   publish = "frontend/dist"
+
+[build.environment]
+  NODE_VERSION = "22"
 
 [dev]
   command = "npm --prefix frontend run dev -- --host 127.0.0.1"

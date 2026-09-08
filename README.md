@@ -14,9 +14,6 @@ database, all deployable on free tiers.
 This replaces the earlier Flask/SQLAlchemy backend — Netlify Functions don't
 support Python natively (JS, TS, and Go only), so the backend logic was
 ported to Node while keeping the exact same `/api/...` routes and behavior.
-The RuleLock AI integration point is preserved as-is: disabled by default,
-lives in `netlify/functions/lib/rulelockService.js`, and can be switched on
-later with `RULELOCK_ENABLED=true` without touching anything else.
 
 ## One-time Supabase setup
 
@@ -62,8 +59,6 @@ coupon codes (`CAKE10`, `CAKE20`, `SAVE500`, etc.).
    - `JWT_SECRET_KEY` — any long random string
    - `ADMIN_USERNAME`, `ADMIN_PASSWORD`
    - `CAKELY_SECURITY_MODE` = `normal`
-   - `RULELOCK_ENABLED` = `false`
-   - `RULELOCK_FAIL_MODE` = `OPEN`
    - Leave `FRONTEND_URL` and `VITE_API_URL` blank — frontend and backend
      share the same Netlify domain, so no CORS setup is needed.
 4. Deploy. Your site and its API both live at the same Netlify URL —
