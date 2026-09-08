@@ -6,8 +6,8 @@
   NODE_VERSION = "22"
 
 [dev]
-  command = "npm --prefix frontend run dev -- --host 127.0.0.1"
-  targetPort = 5173
+  command = "npm --prefix frontend run preview -- --host 127.0.0.1"
+  targetPort = 4173
   port = 8888
 
 [functions]
