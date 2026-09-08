@@ -1,0 +1,24 @@
+[build]
+  command = "npm --prefix frontend install && npm --prefix frontend run build && npm --prefix netlify/functions install"
+  publish = "frontend/dist"
+
+[dev]
+  command = "npm --prefix frontend run dev -- --host 127.0.0.1"
+  targetPort = 5173
+  port = 8888
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# API calls stay on the same domain and get rewritten to the function.
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+
+# SPA fallback so client-side routes (e.g. /admin, /product/x) work on refresh.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

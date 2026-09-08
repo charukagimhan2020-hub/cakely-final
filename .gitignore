@@ -1,0 +1,12 @@
+.env
+.venv/
+venv/
+node_modules/
+__pycache__/
+*.pyc
+*.db
+frontend/dist/
+backend/uploads/
+
+# Local Netlify folder
+.netlify

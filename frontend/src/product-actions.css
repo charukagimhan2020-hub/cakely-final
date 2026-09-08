@@ -1,0 +1,1 @@
+.product-actions{display:flex;gap:10px}.product-actions .button{flex:1}.button.secondary{background:#252422;color:#fff}.button.secondary:hover{background:#aa4e3e}@media(max-width:520px){.product-actions{flex-direction:column}}
