@@ -172,7 +172,7 @@ function Orders({ orders, reload }) {
               <td><strong>{order.orderNumber}</strong><small>{order.customer || 'Guest customer'}</small></td>
               <td><span className={`admin-badge ${String(order.paymentMethod).toLowerCase()}`}>{order.paymentMethod}</span></td>
               <td>{money(order.total)}</td>
-              <td><select value={order.status} onChange={(e) => update(order.id, e.target.value)}><option>PENDING</option><option>CONFIRMED</option><option>PREPARING</option><option>READY</option><option>OUT_FOR_DELIVERY</option><option>DELIVERED</option><option>COMPLETED</option><option>CANCELLED</option></select></td>
+              <td><select value={order.status} onChange={(e) => update(order.id, e.target.value)}><option>PENDING</option><option>PENDING_REVIEW</option><option>CONFIRMED</option><option>PREPARING</option><option>READY</option><option>OUT_FOR_DELIVERY</option><option>DELIVERED</option><option>COMPLETED</option><option>CANCELLED</option></select></td>
               <td className="align-right"><small>{new Date(order.createdAt).toLocaleDateString('en-LK')}</small></td>
             </tr>
           ))}

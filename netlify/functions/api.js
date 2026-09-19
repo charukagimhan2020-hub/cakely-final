@@ -13,6 +13,9 @@ const SECRET_KEY = process.env.JWT_SECRET_KEY || process.env.SECRET_KEY || "dev-
 const SECURITY_MODE = (process.env.CAKELY_SECURITY_MODE || "normal").toLowerCase();
 const PRODUCT_BUCKET = process.env.SUPABASE_PRODUCT_BUCKET || "product-images";
 const CUSTOM_CAKE_BUCKET = process.env.SUPABASE_CUSTOM_CAKE_BUCKET || "custom-cakes";
+const RULELOCK_API_URL = process.env.RULELOCK_API_URL || null;
+const RULELOCK_API_TOKEN = process.env.RULELOCK_API_TOKEN || null;
+const RULELOCK_TIMEOUT_MS = Number(process.env.RULELOCK_TIMEOUT_MS || 4000);
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SECRET_KEY, {
   auth: { persistSession: false },
@@ -91,9 +94,67 @@ async function requireAdmin(req, res) {
   return user;
 }
 
-async function record(eventType, metadata = {}, userId = null, orderId = null) {
+async function record(eventType, metadata = {}, userId = null, orderId = null, sessionId = null) {
   const eventId = `evt_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
-  await supabase.from("transaction_events").insert({ event_id: eventId, event_type: eventType, metadata, user_id: userId, order_id: orderId });
+  await supabase.from("transaction_events").insert({ event_id: eventId, event_type: eventType, metadata: { session_id: sessionId, ...metadata }, user_id: userId, order_id: orderId });
+}
+
+async function isRulelockEnabled() {
+  const { data } = await supabase
+    .from("transaction_events")
+    .select("metadata")
+    .eq("event_type", "RULELOCK_SETTING_CHANGED")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.metadata?.enabled === true;
+}
+
+async function reviewWithRuleLock({ orderId, sessionId, accountId, coupons, discount, items, subtotal, total, paymentMethod, accountVerified, pastOrders, pastRefusals }) {
+  if (!RULELOCK_API_URL) return { decision: "accept", reason: "RuleLock not configured" };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), RULELOCK_TIMEOUT_MS);
+  try {
+    const response = await fetch(RULELOCK_API_URL, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...(RULELOCK_API_TOKEN ? { Authorization: `Bearer ${RULELOCK_API_TOKEN}` } : {}),
+        "X-Session-ID": sessionId || "",
+      },
+      body: JSON.stringify({
+        order_id: orderId,
+        account_id: accountId,
+        session_id: sessionId,
+        coupons_applied: coupons,
+        discount_value: discount,
+        sku: items[0]?.productId ?? "",
+        quantity: items.reduce((sum, item) => sum + Number(item.quantity || 1), 0),
+        subtotal,
+        total,
+        account_verified: accountVerified,
+        past_orders: pastOrders,
+        past_refusals: pastRefusals,
+        payment_method: paymentMethod,
+      }),
+    });
+    if (!response.ok) throw new Error(`RuleLock responded ${response.status}`);
+    return await response.json();
+  } catch (err) {
+    return { decision: "hold", reason: `RuleLock unreachable (${err.message})` };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function codHistory(userId) {
+  const { data } = await supabase.from("orders").select("status").eq("user_id", userId).eq("payment_method", "COD");
+  const rows = data || [];
+  return {
+    pastOrders: rows.length,
+    pastRefusals: rows.filter((row) => row.status === "CANCELLED").length,
+  };
 }
 
 function productAsDict(row) {
@@ -198,7 +259,7 @@ app.post("/auth/register", rateLimit(5, 60_000), async (req, res) => {
   const { data: user, error } = await supabase.from("users").insert({ username, email, password_hash: passwordHash }).select().single();
   if (error?.code === "23505") return res.status(409).json({ success: false, error: { code: "USER_EXISTS", message: "That username or email is already registered." } });
   if (error) return res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: error.message } });
-  await record("REGISTER", { email: user.email });
+  await record("REGISTER", { email: user.email }, null, null, req.headers["x-session-id"] || null);
   res.status(201).json({ success: true, data: { token: tokenFor(user), user: { username: user.username, isAdmin: false } } });
 });
 
@@ -209,7 +270,7 @@ app.post("/auth/login", rateLimit(10, 60_000), async (req, res) => {
   if (!user || !(await bcrypt.compare(data.password || "", user.password_hash))) {
     return res.status(401).json({ success: false, error: { code: "INVALID_LOGIN", message: "Username/email or password is incorrect." } });
   }
-  await record("LOGIN", { role: user.is_admin ? "admin" : "customer" }, user.id);
+  await record("LOGIN", { role: user.is_admin ? "admin" : "customer" }, user.id, null, req.headers["x-session-id"] || null);
   res.json({ success: true, data: { token: tokenFor(user), user: { username: user.username, isAdmin: user.is_admin } } });
 });
 
@@ -251,6 +312,7 @@ app.post("/checkout", async (req, res) => {
   const { user } = await currentUser(req);
   const data = req.body || {};
   const items = data.items || [];
+  const sessionId = req.headers["x-session-id"] || null;
   if (!user || user.is_admin) {
     return res.status(401).json({ success: false, error: { code: "UNAUTHORIZED", message: "Please sign in before adding items or placing an order." } });
   }
@@ -262,7 +324,9 @@ app.post("/checkout", async (req, res) => {
   const verifiedItems = [];
   for (const entry of items) {
     const { data: item } = await supabase.from("products").select("*").eq("id", entry.productId).maybeSingle();
-    const quantity = Math.max(1, Math.min(Number(entry.quantity || 1), 20));
+    const quantity = SECURITY_MODE === "research"
+      ? Math.max(1, Number(entry.quantity || 1))
+      : Math.max(1, Math.min(Number(entry.quantity || 1), 20));
     if (!item || !item.active) {
       return res.status(400).json({ success: false, error: { code: "PRODUCT_UNAVAILABLE", message: "A selected cake is unavailable." } });
     }
@@ -275,13 +339,13 @@ app.post("/checkout", async (req, res) => {
   const couponResult = await validateCoupons({ codes: data.coupons || [], subtotal, user, paymentMethod: data.paymentMethod, securityMode: SECURITY_MODE, supabase });
   const submittedDiscount = Number(data.discount || 0);
   if (submittedDiscount !== couponResult.discount) {
-    await record("DISCOUNT_MANIPULATION_ATTEMPT", { coupons: data.coupons || [], expectedDiscount: couponResult.discount, submittedDiscount }, user.id);
+    await record("DISCOUNT_MANIPULATION_ATTEMPT", { coupons: data.coupons || [], expectedDiscount: couponResult.discount, submittedDiscount }, user.id, null, sessionId);
   }
   if ((data.coupons || []).length > 1) {
-    await record("COUPON_STACK_ATTEMPT", { coupons: data.coupons, accepted: couponResult.accepted, rejected: couponResult.rejected }, user.id);
+    await record("COUPON_STACK_ATTEMPT", { coupons: data.coupons, accepted: couponResult.accepted, rejected: couponResult.rejected }, user.id, null, sessionId);
   }
   for (const rejected of couponResult.rejected) {
-    if (/limit|expired/i.test(rejected.reason)) await record("COUPON_LIMIT_EXCEEDED", rejected, user.id);
+    if (/limit|expired/i.test(rejected.reason)) await record("COUPON_LIMIT_EXCEEDED", rejected, user.id, null, sessionId);
   }
 
   const discount = couponResult.discount;
@@ -289,6 +353,34 @@ app.post("/checkout", async (req, res) => {
   const codFee = data.paymentMethod === "COD" && !data.codPromotion ? 150 : 0;
   const total = subtotal - discount + delivery + codFee;
   const orderNumber = `CK-${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}`;
+
+  const rulelockOn = await isRulelockEnabled();
+  let rulelockResult = { decision: "accept", reason: "RuleLock disabled" };
+  if (rulelockOn) {
+    const { pastOrders, pastRefusals } = data.paymentMethod === "COD"
+      ? await codHistory(user.id)
+      : { pastOrders: 0, pastRefusals: 0 };
+
+    rulelockResult = await reviewWithRuleLock({
+      orderId: orderNumber,
+      sessionId,
+      accountId: String(user.id),
+      coupons: couponResult.accepted.map((coupon) => coupon.code),
+      discount,
+      items: verifiedItems,
+      subtotal,
+      total,
+      paymentMethod: data.paymentMethod,
+      accountVerified: true,
+      pastOrders,
+      pastRefusals,
+    });
+
+    if (rulelockResult.decision === "reject") {
+      await record("RULELOCK_REJECTED", { reason: rulelockResult.reason }, user.id, null, sessionId);
+      return res.status(403).json({ success: false, error: { code: "RULELOCK_REJECTED", message: rulelockResult.reason || "This order could not be placed." } });
+    }
+  }
 
   const { data: order, error } = await supabase
     .from("orders")
@@ -299,6 +391,7 @@ app.post("/checkout", async (req, res) => {
       address: data.address,
       payment_method: data.paymentMethod,
       payment_status: data.paymentMethod === "CARD" ? "PAID" : "PENDING",
+      status: rulelockResult.decision === "hold" ? "PENDING_REVIEW" : "PENDING",
       subtotal,
       discount,
       delivery_fee: delivery + codFee,
@@ -309,7 +402,8 @@ app.post("/checkout", async (req, res) => {
   if (error) return res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: error.message } });
 
   await recordUsage({ result: couponResult, userId: user.id, orderId: order.id, supabase });
-  await record("ORDER_CREATED", { total, paymentMethod: order.payment_method, coupons: data.coupons, acceptedCoupons: couponResult.accepted, rejectedCoupons: couponResult.rejected }, user.id, order.id);
+  await record("ORDER_CREATED", { total, paymentMethod: order.payment_method, coupons: data.coupons, acceptedCoupons: couponResult.accepted, rejectedCoupons: couponResult.rejected }, user.id, order.id, sessionId);
+  if (rulelockOn) await record("RULELOCK_REVIEW", { decision: rulelockResult.decision, reason: rulelockResult.reason }, user.id, order.id, sessionId);
 
   res.status(201).json({ success: true, data: { id: order.id, orderNumber: order.order_number, total, status: order.status } });
 });
@@ -335,7 +429,7 @@ app.post("/custom-cakes", upload.single("image"), async (req, res) => {
     .select()
     .single();
   if (error) return res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: error.message } });
-  await record("CUSTOM_CAKE_CREATED", { size: row.size, flavour: row.flavour, hasImage: !!imageName }, row.user_id);
+  await record("CUSTOM_CAKE_CREATED", { size: row.size, flavour: row.flavour, hasImage: !!imageName }, row.user_id, null, req.headers["x-session-id"] || null);
   res.status(201).json({ success: true, data: { id: row.id, status: row.status } });
 });
 
@@ -430,7 +524,7 @@ app.patch("/admin/rulelock", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const enabled = req.body?.enabled === true;
-  await record("RULELOCK_SETTING_CHANGED", { enabled }, admin.id);
+  await record("RULELOCK_SETTING_CHANGED", { enabled }, admin.id, null, req.headers["x-session-id"] || null);
   res.json({ success: true, data: { enabled } });
 });
 
@@ -460,7 +554,7 @@ app.post("/admin/products", async (req, res) => {
     .select()
     .single();
   if (error) return res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: error.message } });
-  await record("ADMIN_PRODUCT_CREATED", { productId: row.id, name: row.name }, admin.id);
+  await record("ADMIN_PRODUCT_CREATED", { productId: row.id, name: row.name }, admin.id, null, req.headers["x-session-id"] || null);
   res.status(201).json({ success: true, data: productAsDict(row) });
 });
 
@@ -482,7 +576,7 @@ app.put("/admin/products/:id", async (req, res) => {
   if ("basePrice" in data) updates.base_price = Number(data.basePrice);
   const { data: updated, error } = await supabase.from("products").update(updates).eq("id", productId).select().single();
   if (error) return res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: error.message } });
-  await record("ADMIN_PRODUCT_UPDATED", { productId }, admin.id);
+  await record("ADMIN_PRODUCT_UPDATED", { productId }, admin.id, null, req.headers["x-session-id"] || null);
   res.json({ success: true, data: productAsDict(updated) });
 });
 
@@ -501,7 +595,7 @@ app.post("/admin/products/:id/image", upload.single("image"), async (req, res) =
   const imageDataUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
   const { data: updated, error } = await supabase.from("products").update({ image: imageDataUrl }).eq("id", productId).select().single();
   if (error) return res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: error.message } });
-  await record("ADMIN_PRODUCT_IMAGE_CHANGED", { productId, storage: "database", bytes: req.file.size, contentType: req.file.mimetype }, admin.id);
+  await record("ADMIN_PRODUCT_IMAGE_CHANGED", { productId, storage: "database", bytes: req.file.size, contentType: req.file.mimetype }, admin.id, null, req.headers["x-session-id"] || null);
   res.json({ success: true, data: productAsDict(updated) });
 });
 
@@ -519,7 +613,7 @@ app.delete("/admin/products/:id", async (req, res) => {
   }
   const { error } = await supabase.from("products").delete().eq("id", productId);
   if (error) return res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: error.message } });
-  await record("ADMIN_PRODUCT_DELETED", { productId }, admin.id);
+  await record("ADMIN_PRODUCT_DELETED", { productId }, admin.id, null, req.headers["x-session-id"] || null);
   res.json({ success: true });
 });
 
@@ -528,11 +622,11 @@ app.patch("/admin/orders/:id", async (req, res) => {
   if (!admin) return;
   const orderId = Number(req.params.id);
   const status = (req.body || {}).status;
-  const allowed = new Set(["PENDING", "CONFIRMED", "PREPARING", "READY", "OUT_FOR_DELIVERY", "DELIVERED", "COMPLETED", "CANCELLED", "REFUNDED"]);
+  const allowed = new Set(["PENDING", "PENDING_REVIEW", "CONFIRMED", "PREPARING", "READY", "OUT_FOR_DELIVERY", "DELIVERED", "COMPLETED", "CANCELLED", "REFUNDED"]);
   if (!allowed.has(status)) return res.status(400).json({ success: false, error: { code: "INVALID_STATUS", message: "Order or status is invalid." } });
   const { data: updated, error } = await supabase.from("orders").update({ status }).eq("id", orderId).select().maybeSingle();
   if (error || !updated) return res.status(400).json({ success: false, error: { code: "INVALID_STATUS", message: "Order or status is invalid." } });
-  await record("ORDER_STATUS_CHANGED", { status }, admin.id, orderId);
+  await record("ORDER_STATUS_CHANGED", { status }, admin.id, orderId, req.headers["x-session-id"] || null);
   res.json({ success: true, data: { id: updated.id, status: updated.status } });
 });
 
@@ -563,7 +657,7 @@ app.post("/admin/coupons", async (req, res) => {
     .select()
     .single();
   if (error) return res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: error.message } });
-  await record("ADMIN_COUPON_CREATED", { couponId: row.id, code: row.code }, admin.id);
+  await record("ADMIN_COUPON_CREATED", { couponId: row.id, code: row.code }, admin.id, null, req.headers["x-session-id"] || null);
   res.status(201).json({ success: true, data: { id: row.id, code: row.code } });
 });
 
@@ -587,7 +681,7 @@ app.put("/admin/coupons/:id", async (req, res) => {
   if ("expiresAt" in data) updates.expires_at = data.expiresAt;
   const { error } = await supabase.from("coupons").update(updates).eq("id", couponId);
   if (error) return res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: error.message } });
-  await record("ADMIN_COUPON_UPDATED", { couponId }, admin.id);
+  await record("ADMIN_COUPON_UPDATED", { couponId }, admin.id, null, req.headers["x-session-id"] || null);
   res.json({ success: true, data: { id: couponId } });
 });
 
@@ -597,7 +691,7 @@ app.delete("/admin/coupons/:id", async (req, res) => {
   const couponId = Number(req.params.id);
   const { error } = await supabase.from("coupons").update({ active: false }).eq("id", couponId);
   if (error) return res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: error.message } });
-  await record("ADMIN_COUPON_DEACTIVATED", { couponId }, admin.id);
+  await record("ADMIN_COUPON_DEACTIVATED", { couponId }, admin.id, null, req.headers["x-session-id"] || null);
   res.json({ success: true });
 });
 
