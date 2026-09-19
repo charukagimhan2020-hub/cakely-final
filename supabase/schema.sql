@@ -64,6 +64,11 @@ create table if not exists transaction_events (
   created_at timestamptz not null default now()
 );
 
+-- Existing projects created before event metadata was introduced need this
+-- idempotent migration; CREATE TABLE IF NOT EXISTS does not add new columns.
+alter table transaction_events
+  add column if not exists metadata jsonb not null default '{}'::jsonb;
+
 create table if not exists custom_cake_requests (
   id           bigint generated always as identity primary key,
   user_id      bigint,
