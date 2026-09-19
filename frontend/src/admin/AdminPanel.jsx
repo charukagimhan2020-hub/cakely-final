@@ -256,14 +256,14 @@ function Events({ events }) {
   )
 }
 
-function RuleLock({ enabled, reload }) {
+function RuleLock({ enabled, configured, reload }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const toggle = async () => {
     setSaving(true); setError('')
     try { await unwrap(api.patch('/admin/rulelock', { enabled: !enabled })); await reload() } catch (err) { setError(err.response?.data?.error?.message || 'Unable to update RuleLock AI.') } finally { setSaving(false) }
   }
-  return <><Header title="RuleLock AI" /><section className="admin-card rulelock-card"><div className="rulelock-heading"><div className="rulelock-icon"><BrainCircuit size={24} /></div><div><p className="admin-kicker">Integration control</p><h2>RuleLock AI</h2></div></div><p className="rulelock-copy">Use this switch to control whether the future RuleLock AI service is connected to Cakely. This setting does not run RuleLock AI by itself.</p><div className="rulelock-control"><div><strong>{enabled ? 'RuleLock AI is on' : 'RuleLock AI is off'}</strong><small>{enabled ? 'The integration is marked as connected.' : 'The integration is disconnected from this site.'}</small></div><button type="button" className={enabled ? 'rulelock-switch enabled' : 'rulelock-switch'} onClick={toggle} disabled={saving} aria-pressed={enabled} aria-label={enabled ? 'Turn RuleLock AI off' : 'Turn RuleLock AI on'}><span /></button></div>{error && <p className="error">{error}</p>}</section></>
+  return <><Header title="RuleLock AI" /><section className="admin-card rulelock-card"><div className="rulelock-heading"><div className="rulelock-icon"><BrainCircuit size={24} /></div><div><p className="admin-kicker">Integration control</p><h2>RuleLock AI</h2></div></div><p className="rulelock-copy">When enabled, each checkout is reviewed by the configured RuleLock AI service before it is accepted.</p><div className="rulelock-control"><div><strong>{enabled ? 'RuleLock AI is on' : 'RuleLock AI is off'}</strong><small>{enabled ? 'New checkouts are sent to RuleLock for review.' : configured ? 'Enable RuleLock to review new checkouts.' : 'Configure RULELOCK_API_URL in the API service before enabling RuleLock.'}</small></div><button type="button" className={enabled ? 'rulelock-switch enabled' : 'rulelock-switch'} onClick={toggle} disabled={saving} aria-pressed={enabled} aria-label={enabled ? 'Turn RuleLock AI off' : 'Turn RuleLock AI on'}><span /></button></div>{error && <p className="error">{error}</p>}</section></>
 }
 
 export default function AdminPanel() {
@@ -289,7 +289,7 @@ export default function AdminPanel() {
     : tab === 'customers' ? <Customers customers={data.customers || []} />
     : tab === 'coupons' ? <Coupons coupons={data.coupons || []} reload={load} />
     : tab === 'events' ? <Events events={data.events || []} />
-    : <RuleLock enabled={data.rulelockEnabled === true} reload={load} />
+    : <RuleLock enabled={data.rulelockEnabled === true} configured={data.rulelockConfigured === true} reload={load} />
 
   return (
     <div className="admin-shell">

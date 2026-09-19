@@ -96,7 +96,7 @@ async function requireAdmin(req, res) {
 
 async function record(eventType, metadata = {}, userId = null, orderId = null, sessionId = null) {
   const eventId = `evt_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
-  await supabase.from("transaction_events").insert({ event_id: eventId, event_type: eventType, metadata: { session_id: sessionId, ...metadata }, user_id: userId, order_id: orderId });
+  return supabase.from("transaction_events").insert({ event_id: eventId, event_type: eventType, metadata: { session_id: sessionId, ...metadata }, user_id: userId, order_id: orderId });
 }
 
 async function isRulelockEnabled() {
@@ -532,6 +532,7 @@ app.get("/admin/dashboard", async (req, res) => {
       coupons: couponDicts,
       events: eventDicts,
       rulelockEnabled: rulelockEvent?.metadata?.enabled === true,
+      rulelockConfigured: Boolean(RULELOCK_API_URL),
     },
   });
 });
@@ -540,7 +541,11 @@ app.patch("/admin/rulelock", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
   const enabled = req.body?.enabled === true;
-  await record("RULELOCK_SETTING_CHANGED", { enabled }, admin.id, null, req.headers["x-session-id"] || null);
+  if (enabled && !RULELOCK_API_URL) {
+    return res.status(400).json({ success: false, error: { code: "RULELOCK_NOT_CONFIGURED", message: "Set RULELOCK_API_URL in the API service environment before enabling RuleLock AI." } });
+  }
+  const { error } = await record("RULELOCK_SETTING_CHANGED", { enabled }, admin.id, null, req.headers["x-session-id"] || null);
+  if (error) return res.status(500).json({ success: false, error: { code: "RULELOCK_SETTING_FAILED", message: `Unable to save the RuleLock setting: ${error.message}` } });
   res.json({ success: true, data: { enabled } });
 });
 
