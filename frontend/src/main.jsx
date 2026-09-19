@@ -19,6 +19,13 @@ import CustomerAccountPage from './CustomerAccount'
 import CheckoutPage from './CheckoutRulesView'
 
 const money = (value) => `Rs. ${Number(value || 0).toLocaleString('en-LK')}`
+const cakeSizes = ['1 kg', '2 kg', '3 kg', '5 kg', '7 kg', '10 kg']
+const productPrice = (product, size = '1 kg') => {
+  const configured = Number(product?.sizes?.[size])
+  if (Number.isFinite(configured) && configured > 0) return configured
+  const kilograms = Number(String(size).replace(/[^\d.]/g, ''))
+  return Math.round(Number(product?.basePrice || 0) * kilograms)
+}
 const normalizeCart = (items) => Object.values((items || []).reduce((groups, item) => {
   const key = `${item.productId || item.slug}-${item.size || '1 kg'}-${item.flavour || 'Vanilla'}`
   const current = groups[key]
@@ -85,6 +92,8 @@ function Home({ products, add }) {
         </div>
         <div className="product-grid">{products.slice(0, 4).map((product) => <ProductCard key={product.slug} product={product} add={add} />)}</div>
       </section>
+      <section className="feature-band"><div className="feature-image" /><div className="feature-copy"><p className="eyebrow accent">Made for celebrations</p><h2>Fresh from our<br /><em>oven to you.</em></h2><p>Choose a cake, select the size you need, and decide between delivery or easy self pickup.</p><Link to="/cakes" className="button light">Choose your cake <ArrowRight size={17} /></Link></div></section>
+      <section className="section"><div className="section-head"><div><p className="eyebrow">The Cakely promise</p><h2>Simple, sweet<br /><em>and personal.</em></h2></div></div><div className="promise"><div className="promise-item"><span>01</span><h3>Baked to order</h3><p>Your cake is prepared after you place your order, never pulled from a shelf.</p></div><div className="promise-item"><span>02</span><h3>Sizes that fit</h3><p>From 1 kg gatherings to 10 kg celebrations, pick the cake size that suits your moment.</p></div><div className="promise-item"><span>03</span><h3>Delivery or pickup</h3><p>Get it delivered across Colombo or collect it directly from Cakely.</p></div></div></section>
     </main>
   )
 }
@@ -107,7 +116,6 @@ function Cakes({ products, add }) {
             <option>All cakes</option>
             <option>Classic cakes</option>
             <option>Special cakes</option>
-            <option>Custom</option>
           </select>
           <ChevronDown size={16} />
         </label>
@@ -122,8 +130,7 @@ function ProductDetail({ products, add, setCart }) {
   const navigate = useNavigate()
   const product = products.find((entry) => entry.slug === slug) || products[0]
   const [size, setSize] = useState('1 kg')
-  const [flavour, setFlavour] = useState(product?.flavours?.[0] || 'Vanilla')
-  const selected = { ...product, basePrice: product?.sizes?.[size] || product?.basePrice, size, flavour }
+  const selected = { ...product, basePrice: productPrice(product, size), size }
   const buyNow = () => {
     const item = {
       productId: selected.id || selected.slug,
@@ -131,7 +138,7 @@ function ProductDetail({ products, add, setCart }) {
       slug: selected.slug,
       unitPrice: Number(selected.basePrice || 0),
       size: selected.size,
-      flavour: selected.flavour,
+      flavour: selected.flavours?.[0] || selected.name,
       quantity: 1,
     }
     setCart([])
@@ -144,58 +151,21 @@ function ProductDetail({ products, add, setCart }) {
       <div className="detail-copy">
         <p className="eyebrow">{product.category}</p>
         <h1>{product.name}</h1>
-        <p className="detail-price">{money(product.sizes?.[size] || product.basePrice)}</p>
+        <p className="detail-price">{money(productPrice(product, size))}</p>
         <p className="detail-description">{product.description}</p>
         <div className="choice">
           <label>Size
             <select value={size} onChange={(e) => setSize(e.target.value)}>
-              {Object.keys(product.sizes || { '1 kg': product.basePrice }).map((option) => <option key={option}>{option}</option>)}
-            </select>
-          </label>
-          <label>Flavour
-            <select value={flavour} onChange={(e) => setFlavour(e.target.value)}>
-              {(product.flavours || ['Vanilla']).map((entry) => <option key={entry}>{entry}</option>)}
+              {cakeSizes.map((option) => <option key={option}>{option}</option>)}
             </select>
           </label>
         </div>
+        <p className="product-flavour"><strong>Flavour:</strong> {(product.flavours || [product.name]).join(', ')}</p>
         <div className="product-actions">
           <button className="button primary" onClick={() => add(selected)}>Add to bag <ShoppingBag size={17} /></button>
           <button className="button secondary" onClick={buyNow}>Buy now <ArrowRight size={17} /></button>
         </div>
         <p className="delivery-note">Freshly baked to order · Delivery across Colombo</p>
-      </div>
-    </main>
-  )
-}
-
-function CustomCake() {
-  const [sent, setSent] = useState(false)
-  const [form, setForm] = useState({ size: '1 kg', flavour: 'Vanilla', message: '', instructions: '' })
-
-  const submit = async (event) => {
-    event.preventDefault()
-    await unwrap(api.post('/custom-cakes', form))
-    setSent(true)
-  }
-
-  return (
-    <main className="page custom">
-      <div className="custom-art" />
-      <div>
-        <p className="eyebrow accent">Make it yours</p>
-        <h1>One cake.<br /><em>Your story.</em></h1>
-        <p className="detail-description">Send us your favourite photo and we’ll print it on a freshly baked cake. Custom requests are confirmed by our team before baking.</p>
-        {sent ? (
-          <div className="success">Request received. Our team will contact you to confirm the design.</div>
-        ) : (
-          <form className="custom-form" onSubmit={submit}>
-            <label>Size<select value={form.size} onChange={(e) => setForm({ ...form, size: e.target.value })}><option>0.5 kg</option><option>1 kg</option><option>1.5 kg</option><option>2 kg</option><option>3 kg</option></select></label>
-            <label>Flavour<select value={form.flavour} onChange={(e) => setForm({ ...form, flavour: e.target.value })}><option>Vanilla</option><option>Chocolate</option><option>Red Velvet</option><option>Fruit</option></select></label>
-            <label>Message<input required value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })} /></label>
-            <label>Special instructions<textarea value={form.instructions} onChange={(e) => setForm({ ...form, instructions: e.target.value })} /></label>
-            <button className="button primary">Send request <ArrowRight size={17} /></button>
-          </form>
-        )}
       </div>
     </main>
   )
@@ -273,7 +243,7 @@ function App() {
       productId: product.id || product.slug,
       name: product.name,
       slug: product.slug,
-      unitPrice: Number(product.basePrice || product.sizes?.[product.size || '1 kg'] || 0),
+      unitPrice: productPrice(product, product.size || '1 kg'),
       size: product.size || '1 kg',
       flavour: product.flavours?.[0] || 'Vanilla',
       quantity: 1,
@@ -291,7 +261,6 @@ function App() {
         <Link to="/" className="brand"><span className="brand-mark"><CakeSlice size={20} /></span><span>cakely</span></Link>
         <nav className="nav-links">
           <Link to="/cakes">Cakes</Link>
-          <Link to="/custom-photo-cake">Custom cake</Link>
           <Link to="/account">My account</Link>
         </nav>
         <div className="nav-actions">
@@ -304,7 +273,6 @@ function App() {
         <Route path="/" element={<Home products={products} add={add} />} />
         <Route path="/cakes" element={<Cakes products={products} add={add} />} />
         <Route path="/cakes/:slug" element={<ProductDetail products={products} add={add} setCart={setCart} />} />
-        <Route path="/custom-photo-cake" element={<CustomCake />} />
         <Route path="/cart" element={<CartView cart={cart} setCart={setCart} />} />
         <Route path="/checkout" element={<CheckoutPage cart={cart} setCart={setCart} />} />
         <Route path="/login" element={<Login />} />
@@ -320,7 +288,6 @@ function App() {
           <p>Home baked in Colombo, Sri Lanka.</p>
           <div>
             <Link to="/cakes">Cakes</Link>
-            <Link to="/custom-photo-cake">Custom cake</Link>
             <Link to="/account">Account</Link>
           </div>
         </footer>

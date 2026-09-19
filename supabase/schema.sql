@@ -69,18 +69,6 @@ create table if not exists transaction_events (
 alter table transaction_events
   add column if not exists metadata jsonb not null default '{}'::jsonb;
 
-create table if not exists custom_cake_requests (
-  id           bigint generated always as identity primary key,
-  user_id      bigint,
-  size         varchar(20) not null,
-  flavour      varchar(40) not null,
-  message      varchar(255) not null,
-  instructions text,
-  image_name   text,
-  status       varchar(30) not null default 'PENDING',
-  created_at   timestamptz not null default now()
-);
-
 create table if not exists coupons (
   id              bigint generated always as identity primary key,
   code            varchar(40) unique not null,
@@ -117,7 +105,6 @@ alter table products enable row level security;
 alter table addresses enable row level security;
 alter table orders enable row level security;
 alter table transaction_events enable row level security;
-alter table custom_cake_requests enable row level security;
 alter table coupons enable row level security;
 alter table coupon_usages enable row level security;
 

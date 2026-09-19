@@ -23,10 +23,9 @@ const PRODUCTS = [
   ["Birthday Cake", "birthday-cake", "Made-to-celebrate layers with your message on top.", "Special cakes", 3000],
   ["Cup Cakes", "cup-cakes", "A box of six petite cakes for sharing.", "Small treats", 1500],
   ["Jar Cake", "jar-cake", "Layered cake and cream in a take-anywhere jar.", "Small treats", 900],
-  ["Custom Photo Cake", "custom-photo-cake", "Turn a favourite memory into a freshly baked cake.", "Custom", 3500],
 ];
 
-const SIZE_MULTIPLIERS = { "0.5 kg": 0.65, "1 kg": 1, "1.5 kg": 1.45, "2 kg": 1.9, "3 kg": 2.7 };
+const SIZE_MULTIPLIERS = { "1 kg": 1, "2 kg": 2, "3 kg": 3, "5 kg": 5, "7 kg": 7, "10 kg": 10 };
 const FLAVOURS = ["Vanilla", "Chocolate", "Coffee", "Fruit", "Butterscotch", "Coconut"];
 
 const COUPONS = [

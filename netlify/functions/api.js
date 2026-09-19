@@ -7,12 +7,11 @@ const bcrypt = require("bcryptjs");
 const { createClient } = require("@supabase/supabase-js");
 
 const { validateCoupons, recordUsage } = require("./lib/couponService");
-const { storeImage, removeImage, removeImagesByPrefix } = require("./lib/storageService");
+const { removeImagesByPrefix } = require("./lib/storageService");
 
 const SECRET_KEY = process.env.JWT_SECRET_KEY || process.env.SECRET_KEY || "dev-only-change-me";
 const SECURITY_MODE = (process.env.CAKELY_SECURITY_MODE || "normal").toLowerCase();
 const PRODUCT_BUCKET = process.env.SUPABASE_PRODUCT_BUCKET || "product-images";
-const CUSTOM_CAKE_BUCKET = process.env.SUPABASE_CUSTOM_CAKE_BUCKET || "custom-cakes";
 const RULELOCK_API_URL = process.env.RULELOCK_API_URL || null;
 const RULELOCK_API_TOKEN = process.env.RULELOCK_API_TOKEN || null;
 const RULELOCK_TIMEOUT_MS = Number(process.env.RULELOCK_TIMEOUT_MS || 4000);
@@ -173,6 +172,18 @@ function productAsDict(row) {
   };
 }
 
+const CAKE_SIZES = ["1 kg", "2 kg", "3 kg", "5 kg", "7 kg", "10 kg"];
+
+function priceForSize(product, size) {
+  const configuredPrice = Number(product.sizes?.[size]);
+  if (Number.isFinite(configuredPrice) && configuredPrice > 0) return configuredPrice;
+
+  const kilograms = Number(String(size).replace(/[^\d.]/g, ""));
+  const basePrice = Number(product.base_price);
+  if (!CAKE_SIZES.includes(size) || !Number.isFinite(kilograms) || kilograms <= 0 || !Number.isFinite(basePrice) || basePrice <= 0) return null;
+  return Math.round(basePrice * kilograms);
+}
+
 // naive in-memory rate limiter (per warm function instance only — see README)
 function rateLimit(maxHits, windowMs) {
   const hits = new Map();
@@ -213,7 +224,7 @@ app.get("/health", async (_req, res) => {
 });
 
 app.get("/products", async (req, res) => {
-  let query = supabase.from("products").select("*").eq("active", true).order("id");
+  let query = supabase.from("products").select("*").eq("active", true).neq("category", "Custom").order("id");
   const { category, search } = req.query;
   if (category && category !== "All cakes") query = query.eq("category", category);
   if (search) query = query.ilike("name", `%${search}%`);
@@ -223,7 +234,7 @@ app.get("/products", async (req, res) => {
 });
 
 app.get("/products/:slug", async (req, res) => {
-  const { data } = await supabase.from("products").select("*").eq("slug", req.params.slug).eq("active", true).maybeSingle();
+  const { data } = await supabase.from("products").select("*").eq("slug", req.params.slug).eq("active", true).neq("category", "Custom").maybeSingle();
   if (!data) return res.status(404).json({ success: false, error: { code: "NOT_FOUND", message: "Product not found." } });
   res.json({ success: true, data: productAsDict(data) });
 });
@@ -313,10 +324,11 @@ app.post("/checkout", async (req, res) => {
   const data = req.body || {};
   const items = data.items || [];
   const sessionId = req.headers["x-session-id"] || null;
+  const fulfillmentMethod = data.fulfillmentMethod === "PICKUP" ? "PICKUP" : "DELIVERY";
   if (!user || user.is_admin) {
     return res.status(401).json({ success: false, error: { code: "UNAUTHORIZED", message: "Please sign in before adding items or placing an order." } });
   }
-  if (!items.length || !data.address || !["COD", "CARD", "BANK"].includes(data.paymentMethod)) {
+  if (!items.length || (fulfillmentMethod === "DELIVERY" && !data.address) || !["COD", "CARD"].includes(data.paymentMethod)) {
     return res.status(400).json({ success: false, error: { code: "CHECKOUT_INVALID", message: "Complete your cart, address, and payment method." } });
   }
 
@@ -331,9 +343,12 @@ app.post("/checkout", async (req, res) => {
       return res.status(400).json({ success: false, error: { code: "PRODUCT_UNAVAILABLE", message: "A selected cake is unavailable." } });
     }
     const size = entry.size || "1 kg";
-    const price = Number((item.sizes || {})[size] ?? item.base_price);
+    const price = priceForSize(item, size);
+    if (price == null) {
+      return res.status(400).json({ success: false, error: { code: "SIZE_UNAVAILABLE", message: "Choose an available cake size." } });
+    }
     subtotal += price * quantity;
-    verifiedItems.push({ productId: item.id, name: item.name, size, flavour: entry.flavour, quantity, unitPrice: price });
+    verifiedItems.push({ productId: item.id, name: item.name, size, flavour: item.flavours?.[0] || entry.flavour || item.name, quantity, unitPrice: price });
   }
 
   const couponResult = await validateCoupons({ codes: data.coupons || [], subtotal, user, paymentMethod: data.paymentMethod, securityMode: SECURITY_MODE, supabase });
@@ -349,10 +364,13 @@ app.post("/checkout", async (req, res) => {
   }
 
   const discount = couponResult.discount;
-  const delivery = couponResult.freeDelivery ? 0 : 350;
-  const codFee = data.paymentMethod === "COD" && !data.codPromotion ? 150 : 0;
+  const delivery = fulfillmentMethod === "PICKUP" || couponResult.freeDelivery ? 0 : 350;
+  const codFee = data.paymentMethod === "COD" && fulfillmentMethod === "DELIVERY" && !data.codPromotion ? 150 : 0;
   const total = subtotal - discount + delivery + codFee;
   const orderNumber = `CK-${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}`;
+  const address = fulfillmentMethod === "PICKUP"
+    ? { fulfillmentMethod, label: "Self pickup", recipient: data.address?.name || "Customer", phone: data.address?.phone || "", pickupLocation: "Cakely Colombo" }
+    : { ...data.address, fulfillmentMethod };
 
   let { data: order, error } = await supabase
     .from("orders")
@@ -360,7 +378,7 @@ app.post("/checkout", async (req, res) => {
       order_number: orderNumber,
       user_id: user.id,
       items: verifiedItems,
-      address: data.address,
+      address,
       payment_method: data.paymentMethod,
       payment_status: data.paymentMethod === "CARD" ? "PAID" : "PENDING",
       status: "PENDING",
@@ -424,31 +442,6 @@ app.post("/checkout", async (req, res) => {
   res.status(201).json({ success: true, data: { id: order.id, orderNumber: order.order_number, total, status: order.status } });
 });
 
-app.post("/custom-cakes", upload.single("image"), async (req, res) => {
-  const { user } = await currentUser(req);
-  const data = req.body || {};
-  if (!data.size || !data.flavour || !data.message) {
-    return res.status(400).json({ success: false, error: { code: "VALIDATION_ERROR", message: "Size, flavour, and cake message are required." } });
-  }
-  let imageName = null;
-  if (req.file) {
-    try {
-      const stored = await storeImage({ upload: req.file, bucket: CUSTOM_CAKE_BUCKET, prefix: "custom", supabase });
-      imageName = stored.filename;
-    } catch (err) {
-      return res.status(400).json({ success: false, error: { code: "INVALID_IMAGE", message: err.message } });
-    }
-  }
-  const { data: row, error } = await supabase
-    .from("custom_cake_requests")
-    .insert({ user_id: user ? user.id : null, size: data.size, flavour: data.flavour, message: data.message, instructions: data.instructions || "", image_name: imageName })
-    .select()
-    .single();
-  if (error) return res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: error.message } });
-  await record("CUSTOM_CAKE_CREATED", { size: row.size, flavour: row.flavour, hasImage: !!imageName }, row.user_id, null, req.headers["x-session-id"] || null);
-  res.status(201).json({ success: true, data: { id: row.id, status: row.status } });
-});
-
 app.get("/orders", async (req, res) => {
   const { user } = await currentUser(req);
   if (!user) return res.status(401).json({ success: false, error: { code: "UNAUTHORIZED", message: "Please sign in to view orders." } });
@@ -456,7 +449,7 @@ app.get("/orders", async (req, res) => {
   if (error) return res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: error.message } });
   res.json({
     success: true,
-    data: (data || []).map((row) => ({ id: row.id, orderNumber: row.order_number, items: row.items, total: Number(row.total), status: row.status, paymentMethod: row.payment_method, createdAt: row.created_at })),
+    data: (data || []).map((row) => ({ id: row.id, orderNumber: row.order_number, items: row.items, subtotal: Number(row.subtotal), discount: Number(row.discount), deliveryFee: Number(row.delivery_fee), total: Number(row.total), status: row.status, paymentMethod: row.payment_method, fulfillmentMethod: row.address?.fulfillmentMethod || "DELIVERY", createdAt: row.created_at })),
   });
 });
 
@@ -494,7 +487,8 @@ app.get("/admin/dashboard", async (req, res) => {
     customer: usernameById.get(row.user_id) || null,
     total: Number(row.total),
     status: row.status,
-    paymentMethod: row.payment_method,
+      paymentMethod: row.payment_method,
+      fulfillmentMethod: row.address?.fulfillmentMethod || "DELIVERY",
     createdAt: row.created_at,
   }));
 
