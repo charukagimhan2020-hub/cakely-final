@@ -11,6 +11,7 @@ import './admin/upload.css'
 import './customer.css'
 import './account-nav.css'
 import './product-actions.css'
+import './product-quantity.css'
 import './coupon-rules.css'
 import './cart-quantity.css'
 import AdminPanel from './admin/AdminPanel'
@@ -131,7 +132,9 @@ function ProductDetail({ products, add, setCart }) {
   const navigate = useNavigate()
   const product = products.find((entry) => entry.slug === slug) || products[0]
   const [size, setSize] = useState('1 kg')
+  const [quantity, setQuantity] = useState(1)
   const selected = { ...product, basePrice: productPrice(product, size), size }
+  const updateQuantity = (value) => setQuantity(Math.max(1, Math.min(20, Number.parseInt(value, 10) || 1)))
   const buyNow = () => {
     const item = {
       productId: selected.id || selected.slug,
@@ -140,7 +143,7 @@ function ProductDetail({ products, add, setCart }) {
       unitPrice: Number(selected.basePrice || 0),
       size: selected.size,
       flavour: selected.flavours?.[0] || selected.name,
-      quantity: 1,
+      quantity,
     }
     setCart([])
     navigate('/checkout', { state: { buyNow: true, item } })
@@ -160,10 +163,13 @@ function ProductDetail({ products, add, setCart }) {
               {cakeSizes.map((option) => <option key={option}>{option}</option>)}
             </select>
           </label>
+          <label>Quantity
+            <input type="number" min="1" max="20" value={quantity} onChange={(event) => updateQuantity(event.target.value)} />
+          </label>
         </div>
         <p className="product-flavour"><strong>Flavour:</strong> {(product.flavours || [product.name]).join(', ')}</p>
         <div className="product-actions">
-          <button className="button primary" onClick={() => add(selected)}>Add to bag <ShoppingBag size={17} /></button>
+          <button className="button primary" onClick={() => add(selected, quantity)}>Add to bag <ShoppingBag size={17} /></button>
           <button className="button secondary" onClick={buyNow}>Buy now <ArrowRight size={17} /></button>
         </div>
         <p className="delivery-note">Freshly baked to order · Delivery across Colombo</p>
@@ -239,7 +245,7 @@ function App() {
     localStorage.setItem('cakely_cart', JSON.stringify(cart))
   }, [cart])
 
-  const add = (product) => {
+  const add = (product, quantity = 1) => {
     const item = {
       productId: product.id || product.slug,
       name: product.name,
@@ -247,12 +253,12 @@ function App() {
       unitPrice: productPrice(product, product.size || '1 kg'),
       size: product.size || '1 kg',
       flavour: product.flavours?.[0] || 'Vanilla',
-      quantity: 1,
+      quantity: Math.max(1, Math.min(20, Number(quantity) || 1)),
     }
     setCart((items) => {
       const index = items.findIndex((existing) => existing.productId === item.productId && existing.size === item.size && existing.flavour === item.flavour)
       if (index < 0) return [...items, item]
-      return items.map((existing, itemIndex) => itemIndex === index ? { ...existing, quantity: Number(existing.quantity || 1) + 1 } : existing)
+      return items.map((existing, itemIndex) => itemIndex === index ? { ...existing, quantity: Math.min(20, Number(existing.quantity || 1) + item.quantity) } : existing)
     })
   }
 

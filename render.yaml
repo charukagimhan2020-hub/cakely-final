@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: cakely
+    runtime: node
+    buildCommand: npm ci && npm ci --prefix frontend && npm run build:frontend
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: SUPABASE_PRODUCT_BUCKET
+        value: product-images
+      - key: SUPABASE_CUSTOM_CAKE_BUCKET
+        value: custom-cakes
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: CAKELY_SECURITY_MODE
+        value: normal

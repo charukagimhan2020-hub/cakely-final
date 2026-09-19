@@ -79,6 +79,25 @@ For local API testing, install the Netlify CLI (`npm i -g netlify-cli`) and
 run `netlify dev` from the repo root — it serves the frontend and emulates
 the function together, reading env vars from your `.env`.
 
+## Deploy to Render
+
+This repository also includes a Render Blueprint in `render.yaml`. In Render,
+choose **New → Blueprint**, connect this GitHub repository, and create the
+`cakely` web service. Render builds the React frontend, serves it from the
+Node server, and exposes the API on the same domain.
+
+Before deploying, enter the values marked as secret in the Render setup:
+
+- `SUPABASE_URL`
+- `SUPABASE_SECRET_KEY`
+- `JWT_SECRET_KEY`
+- `ADMIN_USERNAME`
+- `ADMIN_PASSWORD`
+
+`SUPABASE_PRODUCT_BUCKET`, `SUPABASE_CUSTOM_CAKE_BUCKET`, and
+`CAKELY_SECURITY_MODE=normal` are included in the Blueprint. Do not set
+`VITE_API_URL`; the frontend uses the same Render domain at `/api`.
+
 ## Notes / limitations to know about
 
 - **Product images are database-backed.** Admin product uploads are stored as

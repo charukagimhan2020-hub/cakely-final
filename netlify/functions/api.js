@@ -710,6 +710,18 @@ app.delete("/admin/coupons/:id", async (req, res) => {
   res.json({ success: true });
 });
 
+// The standalone Render server serves the built frontend from the same app.
+// Netlify does not set SERVE_FRONTEND, so its static-site routing is unchanged.
+if (process.env.SERVE_FRONTEND === "true") {
+  const path = require("path");
+  const frontendDirectory = path.join(process.cwd(), "frontend", "dist");
+  app.use(express.static(frontendDirectory));
+  app.get("*", (req, res, next) => {
+    if (/^\/(api|\.netlify\/functions\/api)(\/|$)/.test(req.originalUrl)) return next();
+    return res.sendFile(path.join(frontendDirectory, "index.html"));
+  });
+}
+
 app.use((_req, res) => res.status(404).json({ success: false, error: { code: "NOT_FOUND", message: "Route not found." } }));
 
 module.exports.app = app;
