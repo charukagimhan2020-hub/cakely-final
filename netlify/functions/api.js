@@ -354,6 +354,25 @@ app.post("/checkout", async (req, res) => {
   const total = subtotal - discount + delivery + codFee;
   const orderNumber = `CK-${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}`;
 
+  let { data: order, error } = await supabase
+    .from("orders")
+    .insert({
+      order_number: orderNumber,
+      user_id: user.id,
+      items: verifiedItems,
+      address: data.address,
+      payment_method: data.paymentMethod,
+      payment_status: data.paymentMethod === "CARD" ? "PAID" : "PENDING",
+      status: "PENDING",
+      subtotal,
+      discount,
+      delivery_fee: delivery + codFee,
+      total,
+    })
+    .select()
+    .single();
+  if (error) return res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: error.message } });
+
   const rulelockOn = await isRulelockEnabled();
   let rulelockResult = { decision: "accept", reason: "RuleLock disabled" };
   if (rulelockOn) {
@@ -362,7 +381,7 @@ app.post("/checkout", async (req, res) => {
       : { pastOrders: 0, pastRefusals: 0 };
 
     rulelockResult = await reviewWithRuleLock({
-      orderId: orderNumber,
+      orderId: order.id,
       sessionId,
       accountId: String(user.id),
       coupons: couponResult.accepted.map((coupon) => coupon.code),
@@ -375,35 +394,32 @@ app.post("/checkout", async (req, res) => {
       pastOrders,
       pastRefusals,
     });
-
-    if (rulelockResult.decision === "reject") {
-      await record("RULELOCK_REJECTED", { reason: rulelockResult.reason }, user.id, null, sessionId);
-      return res.status(403).json({ success: false, error: { code: "RULELOCK_REJECTED", message: rulelockResult.reason || "This order could not be placed." } });
-    }
   }
 
-  const { data: order, error } = await supabase
-    .from("orders")
-    .insert({
-      order_number: orderNumber,
-      user_id: user.id,
-      items: verifiedItems,
-      address: data.address,
-      payment_method: data.paymentMethod,
-      payment_status: data.paymentMethod === "CARD" ? "PAID" : "PENDING",
-      status: rulelockResult.decision === "hold" ? "PENDING_REVIEW" : "PENDING",
-      subtotal,
-      discount,
-      delivery_fee: delivery + codFee,
-      total,
-    })
-    .select()
-    .single();
-  if (error) return res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: error.message } });
+  const finalStatus = rulelockResult.decision === "reject"
+    ? "CANCELLED"
+    : rulelockResult.decision === "hold"
+      ? "PENDING_REVIEW"
+      : "PENDING";
+  if (finalStatus !== "PENDING") {
+    const { data: updatedOrder, error: updateError } = await supabase
+      .from("orders")
+      .update({ status: finalStatus })
+      .eq("id", order.id)
+      .select()
+      .single();
+    if (updateError) return res.status(500).json({ success: false, error: { code: "SERVER_ERROR", message: updateError.message } });
+    order = updatedOrder;
+  }
 
   await recordUsage({ result: couponResult, userId: user.id, orderId: order.id, supabase });
   await record("ORDER_CREATED", { total, paymentMethod: order.payment_method, coupons: data.coupons, acceptedCoupons: couponResult.accepted, rejectedCoupons: couponResult.rejected }, user.id, order.id, sessionId);
   if (rulelockOn) await record("RULELOCK_REVIEW", { decision: rulelockResult.decision, reason: rulelockResult.reason }, user.id, order.id, sessionId);
+
+  if (rulelockResult.decision === "reject") {
+    await record("RULELOCK_REJECTED", { reason: rulelockResult.reason }, user.id, order.id, sessionId);
+    return res.status(403).json({ success: false, error: { code: "RULELOCK_REJECTED", message: rulelockResult.reason || "This order could not be placed." } });
+  }
 
   res.status(201).json({ success: true, data: { id: order.id, orderNumber: order.order_number, total, status: order.status } });
 });
