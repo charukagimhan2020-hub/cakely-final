@@ -1,6 +1,7 @@
 ﻿import { useEffect, useState } from 'react'
 import { Boxes, BrainCircuit, ChevronRight, ClipboardList, LayoutDashboard, LogOut, Menu, PackagePlus, Pencil, Plus, Search, ShieldCheck, Sparkles, Tag, Trash2, Users, X } from 'lucide-react'
 import { api, unwrap } from '../services/api'
+import { useNavigate } from 'react-router-dom'
 
 const money = (value) => `Rs. ${Number(value || 0).toLocaleString('en-LK')}`
 const tabs = [
@@ -267,6 +268,7 @@ function RuleLock({ enabled, configured, reload }) {
 }
 
 export default function AdminPanel() {
+  const navigate = useNavigate()
   const [tab, setTab] = useState('dashboard')
   const [open, setOpen] = useState(false)
   const [data, setData] = useState({})
@@ -307,7 +309,7 @@ export default function AdminPanel() {
             </button>
           ))}
         </nav>
-        <button className="admin-logout" onClick={() => { localStorage.removeItem('cakely_token'); window.location.href = '/login' }}><LogOut size={17} /> Logout</button>
+        <button className="admin-logout" onClick={() => { localStorage.removeItem('cakely_token'); navigate('/login') }}><LogOut size={17} /> Logout</button>
       </aside>
       <main className="admin-main">
         {error ? <div className="admin-error"><ShieldCheck size={20} /><span>{error}</span></div> : content}

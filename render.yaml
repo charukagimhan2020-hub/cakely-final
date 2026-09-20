@@ -24,3 +24,6 @@ services:
         sync: false
       - key: CAKELY_SECURITY_MODE
         value: normal
+      # GitHub Pages is hosted under /cakely-final, but CORS uses only its origin.
+      - key: FRONTEND_URL
+        value: https://charukagimhan2020-hub.github.io

@@ -98,6 +98,30 @@ Before deploying, enter the values marked as secret in the Render setup:
 `CAKELY_SECURITY_MODE=normal` are included in the Blueprint. Do not set
 `VITE_API_URL`; the frontend uses the same Render domain at `/api`.
 
+## Deploy the frontend to GitHub Pages (Render API + Supabase)
+
+The GitHub Pages workflow in `.github/workflows/deploy-pages.yml` publishes
+only `frontend/dist`. It builds the frontend with a public URL for the Render
+API; Supabase remains private to the backend because its secret key is never
+included in the frontend build.
+
+1. In GitHub, open **Settings â†’ Pages**, choose **GitHub Actions** as the
+   source, then push to `main` (or run the workflow manually).
+2. In **Settings â†’ Secrets and variables â†’ Actions â†’ Variables**, create
+   `VITE_API_URL` with your Render service URL, for example
+   `https://your-service.onrender.com`. This is intentionally a repository
+   variable rather than a secret: browser clients need to know the API URL.
+3. In Render, set `FRONTEND_URL` to
+   `https://charukagimhan2020-hub.github.io`. The `/cakely-final` path is not
+   included because CORS checks the origin only. Redeploy the Render service
+   after changing it. The Blueprint now declares this value for new/synced
+   services as well.
+
+The site will be available at
+`https://charukagimhan2020-hub.github.io/cakely-final/`. Pages uses hash
+routes (`#/cakes`, `#/admin`, etc.) so direct navigation and refreshes do not
+need server-side rewrite rules.
+
 ## Notes / limitations to know about
 
 - **Product images are database-backed.** Admin product uploads are stored as

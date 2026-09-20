@@ -31,7 +31,19 @@ app.use((req, _res, next) => {
   next();
 });
 
-const frontendOrigins = (process.env.FRONTEND_URL || "").split(",").map((o) => o.trim()).filter(Boolean);
+// CORS compares origins, not full URLs. Normalising also makes a value such as
+// `https://account.github.io/project-name/` work when supplied from a dashboard.
+const frontendOrigins = (process.env.FRONTEND_URL || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean)
+  .map((origin) => {
+    try {
+      return new URL(origin).origin;
+    } catch {
+      return origin.replace(/\/+$/, "");
+    }
+  });
 app.use(
   cors({
     origin: frontendOrigins.length ? frontendOrigins : true,

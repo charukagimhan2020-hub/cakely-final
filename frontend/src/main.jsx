@@ -1,6 +1,6 @@
 ﻿import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { BrowserRouter, HashRouter, Link, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { ArrowRight, CakeSlice, ChevronDown, Menu, Search, ShoppingBag, Sparkles, X } from 'lucide-react'
 import { api, unwrap } from './services/api'
 import './styles.css'
@@ -43,6 +43,7 @@ const productImage = (product) => {
 }
 
 function ProductCard({ product, add }) {
+  const navigate = useNavigate()
   return (
     <article className="product-card">
       <Link to={`/cakes/${product.slug}`} className="product-photo">
@@ -55,7 +56,7 @@ function ProductCard({ product, add }) {
           <h3>{product.name}</h3>
           <p className="muted">From {money(product.basePrice)}</p>
         </div>
-        <button className="circle-button" onClick={() => (localStorage.getItem('cakely_token') ? add(product) : window.location.assign('/login'))} aria-label={`Add ${product.name} to cart`}>
+        <button className="circle-button" onClick={() => (localStorage.getItem('cakely_token') ? add(product) : navigate('/login'))} aria-label={`Add ${product.name} to cart`}>
           <ShoppingBag size={17} />
         </button>
       </div>
@@ -179,6 +180,7 @@ function ProductDetail({ products, add, setCart }) {
 }
 
 function Login() {
+  const navigate = useNavigate()
   const [form, setForm] = useState({ identifier: '', password: '', username: '' })
   const [error, setError] = useState('')
   const location = useLocation()
@@ -194,9 +196,9 @@ function Login() {
       }))
       localStorage.setItem('cakely_token', result.data.token)
       if (isAdmin) {
-        window.location.assign('/admin')
+        navigate('/admin')
       } else {
-        window.location.assign('/account')
+        navigate('/account')
       }
     } catch (err) {
       setError(err.response?.data?.error?.message || 'Unable to sign in.')
@@ -304,8 +306,9 @@ function App() {
 }
 
 const root = createRoot(document.getElementById('root'))
+const Router = import.meta.env.VITE_DEPLOY_TARGET === 'github-pages' ? HashRouter : BrowserRouter
 root.render(
-  <BrowserRouter>
+  <Router>
     <App />
-  </BrowserRouter>
+  </Router>
 )
